@@ -1,45 +1,57 @@
-import requests
 import streamlit as st
 from snowflake.snowpark.functions import col
+import requests
+import pandas as pd
 
 # Write directly to the app
-st.title(f"🥤 Customize Your Smoothie! 🥤")
+st.title(":cup_with_straw: Customize Your Smoothie! :cup_with_straw:")
 st.write(
-    """Choose the fruits you want in your custom Smoothie!"""
+    """Choose the fruits you want in your custom Smoothie!
+    """
 )
 
-name_on_order = st.text_input('Name on smoothie')
-st.write('The name on your Smoothie will be: ', name_on_order)
+name_on_order = st.text_input("Name on Smoothie:")
+st.write("The name on your Smoothie will be:", name_on_order)
 
-cnx= st.connection("snowflake")
+# Connect to Snowflake
+cnx = st.connection("snowflake")
 session = cnx.session()
-my_dataframe = session.table("smoothies.public.fruit_options").select(col('FRUIT_NAME'))
 
-# 🥋 Updated: Added max_selections to limit choices to 5
+# 1. Pull the data, including the new SEARCH_ON column
+my_dataframe = session.table("smoothies.public.fruit_options").select(col('FRUIT_NAME'), col('SEARCH_ON'))
+
+# 2. Convert to Pandas so we can use it for easy lookups later
+pd_df = my_dataframe.to_pandas()
+
+# Display the multiselect using the FRUIT_NAME column
 ingredients_list = st.multiselect(
     'Choose up to 5 ingredients:',
-    my_dataframe,
+    my_dataframe, # Using the snowpark df here is fine for the list
     max_selections=5
 )
 
 if ingredients_list:
     ingredients_string = ''
 
-    for fruit_choosen in ingredients_list:
-        ingredients_string += fruit_choosen + ' '
+    for fruit_chosen in ingredients_list:
+        ingredients_string += fruit_chosen + ' '
+        
+        # 3. Find the SEARCH_ON value for the selected fruit using our Pandas lookup
+        search_on = pd_df.loc[pd_df['FRUIT_NAME'] == fruit_chosen, 'SEARCH_ON'].iloc[0]
+        st.write('The search value for ', fruit_chosen, ' is ', search_on, '.')
 
-        st.subheader(fruit_choosen + ' Nutrition information')
-        smoothiefroot_response = requests.get("https://my.smoothiefroot.com/api/fruit/" + fruit_choosen)
-        sf_df = st.dataframe(data=smoothiefroot_response.json(), use_container_width=True)
+        st.subheader(fruit_chosen + ' Nutrition Information')
+        
+        # 4. Use the SEARCH_ON variable in the API call instead of fruit_chosen
+        fruityvice_response = requests.get("https://fruityvice.com/api/fruit/" + search_on)
+        fv_df = st.dataframe(data=fruityvice_response.json(), use_container_width=True)
 
+    # Build the SQL Insert String
     my_insert_stmt = """ insert into smoothies.public.orders(ingredients, name_on_order)
-            values ('""" + ingredients_string + """', '""" +name_on_order+ """')"""
+                values ('""" + ingredients_string + """', '""" + name_on_order + """')"""
 
-    #st.write(my_insert_stmt)
-    #st.stop()
-    
     time_to_insert = st.button('Submit Order')
 
     if time_to_insert:
         session.sql(my_insert_stmt).collect()
-        st.success('Your Smoothie is ordered!', icon="✅")
+        st.success('Your Smoothie is ordered, ' + name_on_order + '!', icon="✅")
